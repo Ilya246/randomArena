@@ -1,0 +1,7 @@
+{
+  "name": "Random Arena",
+  "author": "Ilya246",
+  "main": "randomArena.RandomArena",
+  "description": "A gamemode plugin that makes players fight using randomly selected units",
+  "version": 1.0
+}
