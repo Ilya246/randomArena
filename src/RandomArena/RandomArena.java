@@ -9,7 +9,8 @@ import arc.util.pooling.Pools;
 import mindustry.content.*;
 import mindustry.core.GameState;
 import mindustry.entities.abilities.UnitSpawnAbility;
-import mindustry.entities.Units;
+import mindustry.entities.*;
+import mindustry.entities.bullet.*;
 import mindustry.entities.units.StatusEntry;
 import mindustry.game.EventType.*;
 import mindustry.game.Team;
@@ -45,20 +46,25 @@ public class RandomArena extends Plugin{
 		UnitTypes.toxopid, UnitTypes.reign,    UnitTypes.eclipse,  UnitTypes.corvus, UnitTypes.omura, UnitTypes.navanax,                 UnitTypes.quell,   UnitTypes.conquer,  UnitTypes.tecta,
 		                                                                                                                                 UnitTypes.disrupt,                     UnitTypes.collaris));
 		boostedUnits.put(UnitTypes.crawler, Seq.with(StatusEffects.shielded, StatusEffects.shielded, StatusEffects.overclock, StatusEffects.overclock, StatusEffects.overclock, StatusEffects.overclock, StatusEffects.overclock, StatusEffects.overclock));
-		boostedUnits.put(UnitTypes.dagger, Seq.with(StatusEffects.overclock, StatusEffects.overclock, StatusEffects.overclock, StatusEffects.overdrive, StatusEffects.shielded));
+		boostedUnits.put(UnitTypes.dagger, Seq.with(StatusEffects.overclock, StatusEffects.overclock, StatusEffects.overclock, StatusEffects.overdrive, StatusEffects.overdrive, StatusEffects.overdrive, StatusEffects.shielded));
 		boostedUnits.put(UnitTypes.obviate, Seq.with(StatusEffects.overdrive, StatusEffects.overdrive, StatusEffects.overclock, StatusEffects.shielded));
 		boostedUnits.put(UnitTypes.anthicus, Seq.with(StatusEffects.overclock, StatusEffects.overclock, StatusEffects.overclock, StatusEffects.overclock));
 		boostedUnits.put(UnitTypes.quell, Seq.with(StatusEffects.overclock));
-		availableUnitSets.each(s -> {
-			s.each(type -> {
-				type.weapons.each(w -> {
-					w.bullet.collidesGround = true;
-					w.bullet.collidesAir = true;
-				});
-				type.armor = 0f;
-				type.buildSpeed = -1f;
+		boostedUnits.put(UnitTypes.flare, Seq.with(StatusEffects.shielded, StatusEffects.shielded, StatusEffects.shielded));
+		// lowtier boosts
+		boostedUnits.put(UnitTypes.nova, Seq.with(StatusEffects.overclock, StatusEffects.overdrive));
+		boostedUnits.put(UnitTypes.risso, Seq.with(StatusEffects.overclock, StatusEffects.overdrive));
+		boostedUnits.put(UnitTypes.stell, Seq.with(StatusEffects.overclock, StatusEffects.overdrive));
+		boostedUnits.put(UnitTypes.elude, Seq.with(StatusEffects.overclock, StatusEffects.overdrive));
+		boostedUnits.put(UnitTypes.mace, Seq.with(StatusEffects.overclock, StatusEffects.overdrive));
+		boostedUnits.put(UnitTypes.vanquish, Seq.with(StatusEffects.overclock, StatusEffects.overdrive));
+		for(UnitType type : content.units()){
+			type.weapons.each(w -> {
+				fixBullet(w.bullet);
 			});
-		});
+			type.armor = 0f;
+			type.buildSpeed = -1f;
+		}
 
 		UnitTypes.crawler.weapons.get(0).bullet.splashDamage = 666666;
 		UnitTypes.omura.abilities.each(ability -> {
@@ -106,23 +112,14 @@ public class RandomArena extends Plugin{
 			});
 			Timer.schedule(() -> {
 				Groups.player.each(p -> {
-					if(playerUnits.get(p.uuid()) == null){
-						assignUnit(p);
-					}
+					initPlayer(p);
 				});
 			}, 5f);
 		});
 		Events.on(PlayerJoin.class, e -> {
 			e.player.sendMessage(gamemodeInfo);
-			if(!scores.containsKey(e.player.uuid())){
-				scores.put(e.player.uuid(), 0);
-			}
-			Unit u = playerUnits.get(e.player.uuid());
-			if(u != null && !u.dead){
-				e.player.unit(u);
-			} else {
-				assignUnit(e.player);
-			}
+			e.player.sendMessage(gamemodeInfo); // send it twice so they see it for sure
+			initPlayer(e.player);
 		});
 		netServer.assigner = (player, players) -> {
 			ObjectIntMap<Team> teamPlayers = new ObjectIntMap<>();
@@ -139,19 +136,7 @@ public class RandomArena extends Plugin{
 				String uuid = unitPlayers.get(e.unit.id);
 				String killerUuid = unitPlayers.get(killer.id);
 				if(uuid != null && killerUuid != null){
-					String name = e.unit.getPlayer() != null ? e.unit.getPlayer().coloredName() : getLastName(uuid);
-					String killerName = killer.getPlayer() != null ? killer.getPlayer().coloredName() : getLastName(killerUuid);
-
-					int newScore = scores.get(killerUuid, 0) + 1;
-					scores.put(killerUuid, newScore);
-					StringBuilder killMessage = new StringBuilder();
-					killMessage.append(killerName).append(" [white](").append(newScore).append(") ").append((char)Iconc.codes.get("modePvp")).append(" ").append(name);
-					Call.sendMessage(killMessage.toString());
-					if(!state.gameOver && newScore >= Config.victoryScore.i()){
-						Call.sendMessage(killerName + " [accent]has won the game!");
-						Events.fire(new GameOverEvent(Team.derelict));
-					}
-
+					addKill(killerUuid, uuid);
 					killedUnprocessed.remove(e.unit);
 					unitPlayers.remove(e.unit.id);
 					if(e.unit.isAdded()){
@@ -164,9 +149,7 @@ public class RandomArena extends Plugin{
 			Player player = e.unit.getPlayer();
 			if(player == null){
 				String uuid = unitPlayers.get(e.unit.id);
-				player = Groups.player.find(p -> {
-					return p.uuid() == uuid;
-				}); // in case the player left unit
+				player = playerByUuid(uuid);
 			}
 			if(player != null){
 				assignUnit(player);
@@ -180,21 +163,9 @@ public class RandomArena extends Plugin{
 					String uuid = unitPlayers.get(unit.id);
 					String killerUuid = unitPlayers.get(killer.id);
 					if(uuid != null && killerUuid != null){
-						String name = getLastName(uuid);
-						String killerName = killer.getPlayer() != null ? killer.getPlayer().coloredName() : getLastName(killerUuid);
-
-						int newScore = scores.get(killerUuid, 0) + 1;
-						scores.put(killerUuid, newScore);
-						StringBuilder killMessage = new StringBuilder();
-						killMessage.append(killerName).append(" [white](").append(newScore).append(") ").append((char)Iconc.codes.get("modePvp")).append(" ").append(name);
-						Call.sendMessage(killMessage.toString());
-						if(!state.gameOver && newScore >= Config.victoryScore.i()){
-							Call.sendMessage(killerName + " [accent]has won the game!");
-							Events.fire(new GameOverEvent(Team.derelict));
-						}
+						addKill(killerUuid, uuid);
 					}
 				}
-
 				unitPlayers.remove(unit.id);
 				if(unit.isAdded()){
 					Call.unitDestroy(unit.id);
@@ -203,6 +174,18 @@ public class RandomArena extends Plugin{
 			killedUnprocessed.clear();
 		});
     }
+	
+	public void fixBullet(BulletType b){
+		b.collidesGround = true;
+		b.collidesAir = true;
+		if(b.spawnUnit != null){
+			b.spawnUnit.targetGround = true;
+			b.spawnUnit.targetAir = true;
+		}
+		if(b.fragBullet != null){
+			fixBullet(b.fragBullet);
+		}
+	}
 
 	public Seq<StatusEntry> getStatusEntries(Unit unit){
 		try{
@@ -258,6 +241,32 @@ public class RandomArena extends Plugin{
 		playerUnits.put(p.uuid(), u);
 		unitPlayers.put(u.id, p.uuid());
 	}
+	
+	public void initPlayer(Player p){
+		if(!scores.containsKey(p.uuid())){
+			scores.put(p.uuid(), 0);
+		}
+		Unit u = playerUnits.get(p.uuid());
+		if(u != null && !u.dead){
+			p.unit(u);
+		} else {
+			assignUnit(p);
+		}
+	}
+	
+	public void addKill(String killerUuid, String uuid){
+		int newScore = scores.get(killerUuid, 0) + 1;
+		scores.put(killerUuid, newScore);
+		String name = getLastName(uuid);
+		String killerName = getLastName(killerUuid);
+		StringBuilder killMessage = new StringBuilder();
+		killMessage.append(killerName).append(" [white](").append(newScore).append(") ").append((char)Iconc.codes.get("modePvp")).append(" ").append(name);
+		Call.sendMessage(killMessage.toString());
+		if(!state.gameOver && newScore >= Config.victoryScore.i()){
+			Call.sendMessage(killerName + " [accent]has won the game!");
+			Events.fire(new GameOverEvent(Team.derelict));
+		}
+	}
 
     public enum Config{
         victoryScore("The score needed for a player to win.", 10),
@@ -293,7 +302,14 @@ public class RandomArena extends Plugin{
     }
 	
 	public String getLastName(String uuid){
-		return netServer.admins.getInfo(uuid).lastName;
+		Player p = playerByUuid(uuid);
+		return p != null ? p.coloredName() : netServer.admins.getInfo(uuid).lastName;
+	}
+	
+	public Player playerByUuid(String uuid){
+		return Groups.player.find(p -> {
+			return p.uuid().equals(uuid);
+		});
 	}
 
     public void registerClientCommands(CommandHandler handler){
