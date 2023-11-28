@@ -187,13 +187,21 @@ public class RandomArena extends Plugin{
 		}
 	}
 
-	public Seq<StatusEntry> getStatusEntries(Unit unit){
-		try{
-			return Reflect.get(unit, "statuses");
-		}catch(Exception e){
-			return Reflect.get(UnitEntity.class, unit, "statuses");
-		}
-	}
+	public static Seq<StatusEntry> getStatusEntries(Unit unit){
+        try{
+            if(unit instanceof MechUnit) return Reflect.get(MechUnit.class, unit, "statuses");
+            if(unit instanceof LegsUnit) return Reflect.get(LegsUnit.class, unit, "statuses");
+            if(unit instanceof PayloadUnit) return Reflect.get(PayloadUnit.class, unit, "statuses");
+            else return Reflect.get(UnitEntity.class, unit, "statuses");
+        }catch(Exception e){
+            try {
+                return Reflect.get(unit.getClass(), unit, "statuses");
+            }catch(Exception e1){
+                Log.debug(e1);
+                return new Seq<>();
+            }
+        }
+    }
 	public void applyStatus(Unit unit, float duration, Seq<StatusEffect> effects){
         Seq<StatusEntry> entries = new Seq<>();
 		for(StatusEffect effect : effects){
